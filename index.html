@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Нарисуй путь — физическая головоломка</title>
+  <meta name="description" content="Рисуйте линии пальцем — шарик покатится по ним с настоящей физикой. Доведите его до чаши и соберите звёзды.">
+  <meta name="theme-color" content="#fdf6e9">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root { --paper: #fdf6e9; --ink: #2d3a8c; --text: #2b2b2b; --muted: #8a8173; --accent: #ff6b4a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; display: flex; justify-content: center; background: var(--paper); color: var(--text); font: 16px/1.4 Nunito, system-ui, sans-serif; -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    .app { display: flex; flex-direction: column; width: min(480px, 100%); height: 100dvh; padding: calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom)); }
+    .top { display: flex; align-items: center; gap: 10px; }
+    h1 { margin: 0; font: 700 34px/1 Caveat, cursive; color: var(--ink); }
+    .lvl { margin-left: auto; font: 700 24px Caveat, cursive; color: var(--muted); }
+    .ink { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-weight: 700; font-size: 14px; color: var(--muted); }
+    .ink__bar { flex: 1; height: 10px; border-radius: 5px; background: #ece2cf; overflow: hidden; }
+    .ink__bar i { display: block; height: 100%; background: var(--ink); border-radius: 5px; transition: width 0.1s; }
+    .stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; }
+    canvas { display: block; max-width: 100%; max-height: 100%; border-radius: 18px; background: #fffdf8; box-shadow: 0 1px 0 #e6dcc8, 0 20px 40px -24px rgba(80, 60, 20, 0.35); touch-action: none; cursor: crosshair; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 8px; margin-top: 10px; }
+    .btn { padding: 13px 8px; border: 2px solid var(--text); border-radius: 14px; background: #fff; font-weight: 800; font-size: 15px; }
+    .btn--go { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 17px; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .hint { margin: 8px 0 0; text-align: center; color: var(--muted); font-size: 14px; }
+    .modal { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; background: rgba(253, 246, 233, 0.86); }
+    .modal[hidden] { display: none; }
+    .box { width: min(360px, 100%); padding: 26px; border: 3px solid var(--text); border-radius: 22px; background: #fff; text-align: center; transform: rotate(-1deg); animation: pop 0.3s ease; }
+    @keyframes pop { from { transform: scale(0.9) rotate(-4deg); opacity: 0; } }
+    .box h2 { margin: 0; font: 700 40px/1 Caveat, cursive; color: var(--ink); }
+    .stars { margin: 10px 0; font-size: 38px; letter-spacing: 6px; }
+    .box p { color: var(--muted); }
+    .box .row { display: flex; gap: 8px; justify-content: center; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <div class="top"><h1>Нарисуй путь ✏️</h1><span class="lvl" id="lvl"></span></div>
+    <div class="ink"><span>Чернила</span><div class="ink__bar"><i id="inkBar"></i></div><span id="stars">☆☆☆</span></div>
+    <div class="stage" id="stage"><canvas id="cv" aria-label="Игровое поле: рисуйте линии"></canvas></div>
+    <div class="controls">
+      <button class="btn" id="undo">↶ Линия</button>
+      <button class="btn" id="clear">🧽 Стереть</button>
+      <button class="btn btn--go" id="go">▶ Пуск</button>
+    </div>
+    <p class="hint" id="hint">Нарисуйте горку, чтобы шарик скатился в чашу</p>
+  </main>
+  <div class="modal" id="modal" hidden><div class="box" id="box"></div></div>
+
+  <script>
+    const W = 400, H = 600, R = 13, G = 900, INK = 650;
+    // Уровни: шарик, чаша (x, y — центр дна, w — ширина), препятствия-прямоугольники, звёзды
+    const LEVELS = [
+      { ball: [70, 70], cup: [320, 560, 80], rects: [], stars: [[150, 230], [230, 330], [290, 430]], hint: 'Нарисуйте горку, чтобы шарик скатился в чашу' },
+      { ball: [330, 70], cup: [80, 560, 80], rects: [[150, 280, 200, 24]], stars: [[260, 200], [110, 340], [90, 470]], hint: 'Обойдите препятствие' },
+      { ball: [70, 70], cup: [320, 330, 76], rects: [[260, 350, 140, 250]], stars: [[120, 300], [200, 420], [300, 250]], hint: 'Чаша на возвышении — нужен трамплин' },
+      { ball: [200, 60], cup: [200, 560, 70], rects: [[0, 300, 160, 22], [240, 300, 160, 22], [120, 440, 160, 20]], stars: [[200, 250], [60, 420], [340, 420]], hint: 'Проведите шарик сквозь лабиринт' },
+      { ball: [60, 60], cup: [60, 560, 72], rects: [[120, 160, 280, 20], [0, 330, 280, 20], [120, 470, 160, 20]], stars: [[350, 120], [40, 270], [350, 420]], hint: 'Зигзаг: вправо, влево и снова вниз' },
+    ];
+    const cv = document.getElementById('cv');
+    const ctx = cv.getContext('2d');
+    const $ = (id) => document.getElementById(id);
+    const save = (() => { try { return JSON.parse(localStorage.getItem('draw_save')) ?? { level: 0, stars: {} }; } catch { return { level: 0, stars: {} }; } })();
+    let lvl, statics, lines, current, ball, got, state, inkUsed, tRun, scale = 1;
+
+    function seg(ax, ay, bx, by) { return { ax, ay, bx, by }; }
+    function rectSegs([x, y, w, h]) { return [seg(x, y, x + w, y), seg(x + w, y, x + w, y + h), seg(x + w, y + h, x, y + h), seg(x, y + h, x, y)]; }
+
+    function load(i) {
+      lvl = i; const L = LEVELS[i];
+      const [cx, cy, cw] = L.cup;
+      statics = [seg(0, -200, 0, H), seg(W, -200, W, H), ...L.rects.flatMap(rectSegs),
+        seg(cx - cw / 2 - 10, cy - 54, cx - cw / 2, cy), seg(cx - cw / 2, cy, cx + cw / 2, cy), seg(cx + cw / 2, cy, cx + cw / 2 + 10, cy - 54)];
+      lines = []; current = null; inkUsed = 0;
+      $('lvl').textContent = `уровень ${i + 1}/${LEVELS.length}`;
+      $('hint').textContent = L.hint;
+      $('modal').hidden = true;
+      resetBall();
+    }
+    function resetBall() {
+      const L = LEVELS[lvl];
+      ball = { x: L.ball[0], y: L.ball[1], vx: 0, vy: 0, rot: 0 };
+      got = L.stars.map(() => false); state = 'draw'; tRun = 0;
+      $('go').textContent = '▶ Пуск';
+      updateUI();
+    }
+    const allSegs = () => statics.concat(lines.flat(), current ? current : []);
+
+    // Физика: гравитация + столкновение круга с отрезками (подшаги для стабильности)
+    function physics(dt) {
+      const steps = 8, h = dt / steps;
+      for (let s = 0; s < steps; s++) {
+        ball.vy += G * h;
+        ball.x += ball.vx * h; ball.y += ball.vy * h;
+        for (const sg of allSegs()) {
+          const dx = sg.bx - sg.ax, dy = sg.by - sg.ay;
+          const len2 = dx * dx + dy * dy || 1;
+          let t = ((ball.x - sg.ax) * dx + (ball.y - sg.ay) * dy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          const cx = sg.ax + dx * t, cy = sg.ay + dy * t;
+          let nx = ball.x - cx, ny = ball.y - cy;
+          const d = Math.hypot(nx, ny);
+          if (d >= R || d === 0) continue;
+          nx /= d; ny /= d;
+          ball.x = cx + nx * R; ball.y = cy + ny * R;
+          const vn = ball.vx * nx + ball.vy * ny;
+          if (vn < 0) {
+            ball.vx -= 1.35 * vn * nx; ball.vy -= 1.35 * vn * ny; // отскок 0.35
+            const tx = -ny, ty = nx, vt = ball.vx * tx + ball.vy * ty;
+            ball.vx -= vt * tx * 0.004; ball.vy -= vt * ty * 0.004; // трение
+          }
+        }
+        ball.rot += ball.vx * h / R;
+      }
+      LEVELS[lvl].stars.forEach(([x, y], i) => { if (!got[i] && Math.hypot(ball.x - x, ball.y - y) < R + 14) { got[i] = true; navigator.vibrate?.(20); updateUI(); } });
+      const [cx, cy, cw] = LEVELS[lvl].cup;
+      if (Math.abs(ball.x - cx) < cw / 2 && ball.y > cy - 50 && ball.y < cy && Math.hypot(ball.vx, ball.vy) < 140) return win();
+      if (ball.y > H + 60 || tRun > 14) return fail();
+    }
+
+    function win() {
+      state = 'done';
+      const n = got.filter(Boolean).length;
+      save.stars[lvl] = Math.max(save.stars[lvl] || 0, n);
+      save.level = Math.max(save.level, Math.min(lvl + 1, LEVELS.length - 1));
+      try { localStorage.setItem('draw_save', JSON.stringify(save)); } catch {}
+      const last = lvl === LEVELS.length - 1;
+      modal(`<h2>${last ? 'Все уровни пройдены!' : 'Попал!'}</h2><div class="stars">${'⭐'.repeat(n)}${'☆'.repeat(3 - n)}</div><p>${n < 3 ? 'Попробуйте собрать все звёзды' : 'Идеально!'}</p>
+        <div class="row"><button class="btn" data-a="retry">Ещё раз</button>${last ? '<button class="btn btn--go" data-a="first">С начала</button>' : '<button class="btn btn--go" data-a="next">Дальше →</button>'}</div>`);
+    }
+    function fail() {
+      state = 'done';
+      modal(`<h2>Мимо!</h2><p>Шарик укатился. Поправьте линии и попробуйте снова.</p><div class="row"><button class="btn btn--go" data-a="reset">Ещё попытка</button></div>`);
+    }
+    function modal(html) { $('box').innerHTML = html; $('modal').hidden = false; }
+
+    function updateUI() {
+      $('inkBar').style.width = `${Math.max(0, 100 - (inkUsed / INK) * 100)}%`;
+      $('stars').textContent = got.map((g) => (g ? '⭐' : '☆')).join('');
+      $('undo').disabled = state !== 'draw' || !lines.length;
+      $('clear').disabled = state !== 'draw' || !lines.length;
+    }
+
+    // Отрисовка
+    function draw() {
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      // клетка тетради
+      ctx.strokeStyle = '#efe6d3'; ctx.lineWidth = 1;
+      for (let x = 20; x < W; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+      for (let y = 20; y < H; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+      const L = LEVELS[lvl];
+      // препятствия
+      ctx.fillStyle = '#6b5b4b';
+      L.rects.forEach(([x, y, w, h]) => { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, 4) : ctx.rect(x, y, w, h); ctx.fill(); });
+      // чаша
+      const [cx, cy, cw] = L.cup;
+      ctx.strokeStyle = '#ff6b4a'; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(cx - cw / 2 - 10, cy - 54); ctx.lineTo(cx - cw / 2, cy); ctx.lineTo(cx + cw / 2, cy); ctx.lineTo(cx + cw / 2 + 10, cy - 54); ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 107, 74, 0.12)'; ctx.fill();
+      // звёзды
+      ctx.font = '26px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      L.stars.forEach(([x, y], i) => { if (!got[i]) ctx.fillText('⭐', x, y + Math.sin(Date.now() / 300 + i) * 3); });
+      // линии игрока
+      ctx.strokeStyle = '#2d3a8c'; ctx.lineWidth = 5;
+      for (const line of [...lines, current].filter(Boolean)) {
+        if (!line.length) continue;
+        ctx.beginPath(); ctx.moveTo(line[0].ax, line[0].ay);
+        line.forEach((s) => ctx.lineTo(s.bx, s.by)); ctx.stroke();
+      }
+      // шарик
+      ctx.save(); ctx.translate(ball.x, ball.y); ctx.rotate(ball.rot);
+      const grad = ctx.createRadialGradient(-4, -4, 2, 0, 0, R);
+      grad.addColorStop(0, '#ffd166'); grad.addColorStop(1, '#f59e0b');
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#b45309'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-R + 3, 0); ctx.lineTo(R - 3, 0); ctx.stroke();
+      ctx.restore();
+      if (state === 'draw') { ctx.fillStyle = 'rgba(45, 58, 140, 0.5)'; ctx.font = '700 15px Nunito, sans-serif'; ctx.fillText('старт', L.ball[0], L.ball[1] - 26); }
+    }
+
+    let last = performance.now();
+    function loop(now) {
+      const dt = Math.min(0.033, (now - last) / 1000); last = now;
+      if (state === 'run') { tRun += dt; physics(dt); }
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // Рисование
+    function toWorld(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; }
+    let lastPt = null;
+    cv.addEventListener('pointerdown', (e) => { if (state !== 'draw' || inkUsed >= INK) return; cv.setPointerCapture(e.pointerId); lastPt = toWorld(e); current = []; });
+    cv.addEventListener('pointermove', (e) => {
+      if (!current || !lastPt) return;
+      const p = toWorld(e);
+      const d = Math.hypot(p[0] - lastPt[0], p[1] - lastPt[1]);
+      if (d < 7) return;
+      if (inkUsed + d > INK) return;
+      current.push(seg(lastPt[0], lastPt[1], p[0], p[1]));
+      inkUsed += d; lastPt = p; updateUI();
+    });
+    const endLine = () => { if (current?.length) lines.push(current); current = null; lastPt = null; updateUI(); };
+    cv.addEventListener('pointerup', endLine);
+    cv.addEventListener('pointercancel', endLine);
+
+    $('go').onclick = () => {
+      if (state === 'draw') { state = 'run'; $('go').textContent = '⏹ Стоп'; updateUI(); }
+      else resetBall();
+    };
+    $('undo').onclick = () => { const l = lines.pop(); if (l) inkUsed -= l.reduce((s, g) => s + Math.hypot(g.bx - g.ax, g.by - g.ay), 0); updateUI(); };
+    $('clear').onclick = () => { lines = []; inkUsed = 0; updateUI(); };
+    $('box').addEventListener('click', (e) => {
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      if (a === 'retry' || a === 'reset') { $('modal').hidden = true; resetBall(); }
+      if (a === 'next') load(lvl + 1);
+      if (a === 'first') load(0);
+    });
+
+    function resize() {
+      const box = $('stage').getBoundingClientRect();
+      const s = Math.min(box.width / W, box.height / H);
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      cv.style.width = `${W * s}px`; cv.style.height = `${H * s}px`;
+      cv.width = Math.round(W * s * dpr); cv.height = Math.round(H * s * dpr);
+      scale = s * dpr;
+    }
+    window.addEventListener('resize', resize);
+    load(Math.min(save.level, LEVELS.length - 1));
+    resize();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
